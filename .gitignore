@@ -1,0 +1,13 @@
+storage*
+github*
+CLAUDE.md
+
+.venv/
+.DS_Store
+data/
+.env
+__pycache__/
+*.duckdb
+target/
+logs/
+.user.yml

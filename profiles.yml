@@ -1,0 +1,9 @@
+package_health:
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', 'packages.duckdb') }}"   # set in pipeline/settings.py
+      threads: 1
+      settings:
+        TimeZone: UTC   # date_trunc('month', ...) cuts months at UTC midnight
+  target: dev

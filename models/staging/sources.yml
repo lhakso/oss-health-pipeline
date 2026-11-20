@@ -1,0 +1,131 @@
+version: 2
+
+# raw_* tables are built by the load step (pipeline/load.py), not by dbt
+# every raw table: one row per (repo, id), with the full GitHub record in payload
+sources:
+  - name: raw
+    schema: main
+    description: Landed GitHub API records, upserted by the load task.
+    tables:
+      - name: raw_commits
+        description: One row per commit (id = sha).
+      - name: raw_pull_requests
+        description: One row per pull request (id = PR number).
+      - name: raw_pr_reviews
+        description: One row per PR review (id = review id).
+      - name: raw_releases
+        description: One row per release (id = release id).
+
+# Bot rule (applied to PR authors, reviewers, and commit authors):
+#   is_bot = user.type = 'Bot' OR user.login LIKE '%[bot]'
+# keys are (repo, id), so uniqueness is tested on the combined key
+models:
+  - name: stg_commits
+    description: One row per commit, latest fetched copy.
+    data_tests:
+      - unique:
+          arguments:
+            column_name: "repo || '#' || sha"
+    columns:
+      - name: repo
+        description: owner/name of the repository.
+        data_tests: [not_null]
+      - name: sha
+        description: Commit hash.
+        data_tests: [not_null]
+      - name: login
+        description: GitHub login of the commit author; null when the commit email isn't linked to an account.
+      - name: is_bot
+        description: True if the author matches the bot rule; false when login is null.
+      - name: committed_at
+        description: commit.author.date as TIMESTAMPTZ.
+        data_tests: [not_null]
+
+  - name: stg_pull_requests
+    description: One row per pull request, latest fetched copy.
+    data_tests:
+      - unique:
+          arguments:
+            column_name: "repo || '#' || number"
+    columns:
+      - name: repo
+        description: owner/name of the repository.
+        data_tests: [not_null]
+      - name: number
+        description: PR number, unique within a repo.
+        data_tests: [not_null]
+      - name: login
+        description: GitHub login of the PR author.
+      - name: is_bot
+        description: True if the PR author matches the bot rule.
+      - name: state
+        description: open or closed (merged PRs are closed).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['open', 'closed']
+      - name: created_at
+        description: When the PR was opened.
+        data_tests: [not_null]
+      - name: updated_at
+        description: Last activity on the PR.
+      - name: closed_at
+        description: When the PR was closed (merged or not); null if open.
+      - name: merged_at
+        description: When the PR was merged; null if never merged.
+
+  - name: stg_pr_reviews
+    description: One row per submitted review; PENDING reviews are dropped.
+    data_tests:
+      - unique:
+          arguments:
+            column_name: "repo || '#' || id"
+    columns:
+      - name: repo
+        description: owner/name of the repository.
+        data_tests: [not_null]
+      - name: id
+        description: Review id.
+        data_tests: [not_null]
+      - name: pr_number
+        description: PR the review belongs to, parsed from pull_request_url.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_pull_requests')
+                field: number
+      - name: login
+        description: GitHub login of the reviewer.
+      - name: is_bot
+        description: True if the reviewer matches the bot rule.
+      - name: state
+        description: Review outcome.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED', 'DISMISSED']
+      - name: submitted_at
+        description: When the review was submitted.
+        data_tests: [not_null]
+
+  - name: stg_releases
+    description: One row per published release; drafts are dropped.
+    data_tests:
+      - unique:
+          arguments:
+            column_name: "repo || '#' || id"
+    columns:
+      - name: repo
+        description: owner/name of the repository.
+        data_tests: [not_null]
+      - name: id
+        description: Release id.
+        data_tests: [not_null]
+      - name: tag_name
+        description: Git tag of the release.
+      - name: published_at
+        description: When the release was published.
+        data_tests: [not_null]
+      - name: prerelease
+        description: True for pre-releases (rc, beta, ...).
